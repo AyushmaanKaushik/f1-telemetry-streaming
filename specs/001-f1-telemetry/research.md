@@ -19,3 +19,8 @@
 
 - **Decision**: Bronze, Silver, Gold pattern
 - **Rationale**: Raw packets (Binary/JSON payload string) will be stored in Bronze. Silver normalizes timestamps, handles standardization (MinMax scaling, state flags), and maps properties to distance-space points. Gold surfaces aggregated metrics and predictions.
+
+## Synthetic Data Generation
+
+- **Decision**: Python bound-fuzzing script generating random structural telemetry data
+- **Rationale**: Replicates the 60Hz UDP data emission required to natively end-to-end test the PySpark architecture without the overhead of physics simulation. Integrates flawlessly by pointing its binary output to the `udp_listener.py` on localhost:20777.

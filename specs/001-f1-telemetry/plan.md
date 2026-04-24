@@ -1,30 +1,32 @@
-# Implementation Plan: F1 Telemetry Streaming
+# Implementation Plan: 001-f1-telemetry
 
-**Branch**: `001-f1-telemetry` | **Date**: 2026-04-24 | **Spec**: [spec.md](./spec.md)
-**Input**: Feature specification from `f1-telemetry-research-plan.md`
+**Branch**: `001-f1-telemetry` | **Date**: 2026-04-24 | **Spec**: [spec.md](spec.md)
+**Input**: Feature specification from `/specs/001-f1-telemetry/spec.md`
+
+**Note**: This template is filled in by the `/speckit.plan` command. See `.specify/templates/plan-template.md` for the execution workflow.
 
 ## Summary
 
-Build a real-time Formula 1 telemetry platform using a Python-based Kafka producer to ingest raw UDP telemetry data and publish to Azure Event Hubs, and process the streams using Spark Structured Streaming on Databricks with stateful transformations (Medallion architecture).
+Build a high-throughput Spark streaming application integrating with an enterprise Azure Event Hubs Kafka bridge. The pipeline will ingest 60Hz F1 UDP packets (or synthetic randomized payloads via a custom python generator simulator) from an edge boundary propagating to Bronze, Silver, and Gold medallions dynamically in Databricks.
 
 ## Technical Context
 
-**Language/Version**: Python 3.11, PySpark
-**Primary Dependencies**: confluent-kafka, databricks (Spark SQL/Streaming)
-**Storage**: Azure Event Hubs, ADLS Gen2, Databricks Delta 
+**Language/Version**: Python 3.11, PySpark (Databricks Runtime 16+)
+**Primary Dependencies**: confluent-kafka, pydantic, pyspark
+**Storage**: Azure Event Hubs, ADLS Gen2 (Delta Lake format)
 **Testing**: pytest
-**Target Platform**: Azure Databricks, Edge/Local (Python UDP Listener)
-**Project Type**: Data Engineering Pipeline
-**Performance Goals**: 60Hz telemetry processing without packet loss
-**Constraints**: Requires overlapping network I/O wait times
-**Scale/Scope**: Processing 4 F1 UDP packet types (Event, Car Telemetry, Car Status, Car Damage) for 20 concurrent F1 cars
+**Target Platform**: Local Edge (Windows/Linux shell) -> Azure Ecosystem
+**Project Type**: streaming-pipeline, cli-simulator
+**Performance Goals**: Support 60Hz x 20 Cars processing without dropping TCP packets on the edge ingress
+**Constraints**: Operates smoothly offline with local synthetic UDP generator mocking
+**Scale/Scope**: 4 primary F1 Protocol packet structures mapped to stateful transform windows
 
 ## Constitution Check
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-- Commits and GIT workflow: Following branching standards.
-- Tests/Documentation: Unit tests for UDP parser and integration for Databricks workflows.
+- Constitution principles emphasize clear testing boundaries, simplicity over complex architectures (YAGNI), and observable logging.
+- Status: **PASSED**. Providing binary synthetic fuzzing keeps testing workflows simple and integrated directly with original listener code instead of building dual network bridges.
 
 ## Project Structure
 
@@ -45,23 +47,30 @@ specs/001-f1-telemetry/
 ```text
 src/
 ├── ingestion/
-│   ├── udp_listener.py
+│   ├── models.py
+│   ├── config.py
+│   ├── logger.py
 │   ├── eventhub_producer.py
-│   └── models.py
+│   ├── udp_listener.py
+│   └── synthetic_generator.py  <-- [NEW]
 ├── databricks/
-│   ├── notebooks/
-│   │   ├── bronze_ingestion.py
-│   │   ├── silver_transformations.py
-│   │   └── gold_aggregations.py
-│   └── lib/
-│       └── streaming_utils.py
+│   ├── lib/
+│   │   └── streaming_utils.py
+│   └── notebooks/
+│       ├── bronze_ingestion.py
+│       ├── silver_transformations.py
+│       └── gold_aggregations.py
+
 tests/
 ├── ingestion/
-└── databricks/
+│   ├── test_parser.py
+│   └── test_producer.py
 ```
 
-**Structure Decision**: Selected a modular repository layout segregating edge ingestion (Python UDP -> Event Hubs) from cloud data processing (Databricks notebooks).
+**Structure Decision**: A dual project structure handling local Python UDP telemetry ingress alongside Databricks workspace artifacts executing heavy Spark aggregations.
 
 ## Complexity Tracking
 
-(No violations requiring justification at this stage.)
+> **Fill ONLY if Constitution Check has violations that must be justified**
+
+(No complexity violations logged for the Synthetic Generator implementation.)
