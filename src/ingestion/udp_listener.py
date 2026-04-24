@@ -36,6 +36,45 @@ def process_and_send(data: bytes, producer: EventHubProducer):
                 "timestamp": datetime.utcnow().isoformat(),
                 "raw_size": len(data)
             }
+            
+            # Unpack specific bodies if they match our synthetic lengths
+            if packet_id == 6 and len(data) >= 29 + 14:
+                # Unpack CarTelemetry Format: <H H b f f H
+                body_data = struct.unpack_from('<HHbffH', data, 29)
+                payload.update({
+                    "speed_kmh": body_data[0],
+                    "engine_rpm": body_data[1],
+                    "gear": body_data[2],
+                    "throttle": body_data[3],
+                    "brake": body_data[4],
+                    "engine_temperature": body_data[5]
+                })
+            elif packet_id == 3 and len(data) >= 29 + 4:
+                # Unpack Event Format: <4s
+                body_data = struct.unpack_from('<4s', data, 29)
+                payload.update({
+                    "eventCode": body_data[0].decode('utf-8', errors='ignore')
+                })
+            elif packet_id == 7 and len(data) >= 29 + 11:
+                # Unpack CarStatus Format: <ffBBB
+                body_data = struct.unpack_from('<ffBBB', data, 29)
+                payload.update({
+                    "fuel_in_tank": body_data[0],
+                    "ers_energy": body_data[1],
+                    "tyre_compound": f"C{body_data[2]}", # Integer to String mapping locally
+                    "tyre_age_laps": body_data[3],
+                    "drs_activation": bool(body_data[4])
+                })
+            elif packet_id == 10 and len(data) >= 29 + 16:
+                # Unpack CarDamage Format: <ffff
+                body_data = struct.unpack_from('<ffff', data, 29)
+                payload.update({
+                    "front_wing_damage": body_data[0],
+                    "rear_wing_damage": body_data[1],
+                    "engine_wear": body_data[2],
+                    "tyre_wear": body_data[3]
+                })
+                
             producer.send_telemetry(partition_key=player_car_index, payload=payload)
     except Exception as e:
         logger.error(f"Failed to process packet: {e}")

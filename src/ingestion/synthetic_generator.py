@@ -33,9 +33,9 @@ def generate_header(packet_id: int, car_index: int) -> bytes:
     )
 
 def simulate_telemetry(udp_socket: socket.socket, duration_seconds: int = None):
-    """Generates 60Hz loop of packets for a specified duration to push to the listener."""
+    """Generates 1Hz loop of packets for a specified duration to push to the listener."""
     print(f"Starting F1 Telemetry Simulation -> UDP {HOST}:{PORT}")
-    target_fps = 60
+    target_fps = 1
     sleep_time = 1.0 / target_fps
     
     start_time = time.time()
@@ -56,9 +56,49 @@ def simulate_telemetry(udp_socket: socket.socket, duration_seconds: int = None):
             # Generate the raw binary blob
             raw_binary_packet = generate_header(packet_id=packet_idx, car_index=car_idx)
             
-            # Append some simulated payload junk to make the bytes > 29 to test bounds
-            fuzzy_payload = bytes([random.randint(0, 255) for _ in range(50)])
-            final_payload = raw_binary_packet + fuzzy_payload
+            # Generate body based on packet ID
+            if packet_idx == 6:
+                # Car Telemetry Format: <H H b f f H
+                # speed_kmh(uint16), engine_rpm(uint16), gear(int8), throttle(float), brake(float), engine_temp(uint16)
+                body = struct.pack(
+                    '<HHbffH',
+                    random.randint(50, 340),      # speed
+                    random.randint(5000, 13000),  # RPM
+                    random.randint(1, 8),         # gear
+                    random.random(),              # throttle
+                    random.random() * 0.5,        # brake
+                    random.randint(90, 110)       # temp
+                )
+            elif packet_idx == 3:
+                # Event Packet Format: <4s
+                events = [b'SSTA', b'SEND', b'RTMT', b'DRSE', b'DRSD']
+                ev_code = random.choice(events)
+                body = struct.pack('<4s', ev_code)
+            elif packet_idx == 7:
+                # Car Status Format: <ffBBB
+                # fuel_in_tank(float), ers_energy(float), tyre_compound(uint8), tyre_age_laps(uint8), drs_activation(uint8)
+                body = struct.pack(
+                    '<ffBBB',
+                    random.uniform(10.0, 110.0), # fuel
+                    random.uniform(0.0, 4000000.0), # ers
+                    random.randint(16, 20),      # compound
+                    random.randint(0, 35),       # age
+                    random.randint(0, 1)         # drs
+                )
+            elif packet_idx == 10:
+                # Car Damage Format: <ffff
+                # front_wing(float), rear_wing(float), engine(float), tyre(float)
+                body = struct.pack(
+                    '<ffff',
+                    random.uniform(0.0, 100.0),
+                    random.uniform(0.0, 100.0),
+                    random.uniform(0.0, 100.0),
+                    random.uniform(0.0, 100.0)
+                )
+            else:
+                body = bytes([random.randint(0, 255) for _ in range(20)])
+                
+            final_payload = raw_binary_packet + body
             
             # Fire packet to the listener
             udp_socket.sendto(final_payload, (HOST, PORT))
