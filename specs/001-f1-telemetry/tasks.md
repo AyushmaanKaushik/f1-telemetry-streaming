@@ -90,6 +90,22 @@ description: "Task list for feature implementation"
 
 ---
 
+## Phase 6: User Story 4 - Synthetic Data Generator (Priority: P2)
+
+**Goal**: Implement a script that mathematically simulates structural telemetry data to mimic raw F1 Game UDP output, enabling offline development and load testing.
+
+**Independent Test**: Running the simulator script pushes binary bounds-fuzzed packets to port `20777`, triggering the locally running `udp_listener.py`.
+
+### Implementation for User Story 4
+
+- [x] T026 [P] [US4] Formulate struct binary packing methodology mapping to F1 packet structures in `src/ingestion/synthetic_generator.py`
+- [x] T027 [US4] Develop randomized fuzzy bounds logic loop mimicking 60Hz intervals for packets 3, 6, 7 & 10 in `src/ingestion/synthetic_generator.py`
+- [x] T028 [US4] Deploy and visually test the binary handshake between `synthetic_generator.py` and `udp_listener.py` on `127.0.0.1`
+
+**Checkpoint**: The Databricks environment can now be tested locally without an active racing game running!
+
+---
+
 ## Phase N: Polish & Cross-Cutting Concerns
 
 **Purpose**: Improvements that affect multiple user stories

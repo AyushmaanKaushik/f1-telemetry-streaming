@@ -1,5 +1,8 @@
 import os
 from pydantic import BaseModel, Field
+from dotenv import load_dotenv
+
+load_dotenv()
 
 class Config(BaseModel):
     eventhub_namespace: str = Field(default_factory=lambda: os.getenv("EVENTHUB_NAMESPACE", ""))

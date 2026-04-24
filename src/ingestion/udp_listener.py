@@ -45,13 +45,17 @@ def main():
     
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp_socket:
         udp_socket.bind((HOST, PORT))
+        udp_socket.settimeout(1.0)
         logger.info(f"Listening for UDP telemetry on {HOST}:{PORT}...")
         
         with ThreadPoolExecutor(max_workers=4) as executor:
             try:
                 while True:
-                    data, addr = udp_socket.recvfrom(2048)
-                    executor.submit(process_and_send, data, producer)
+                    try:
+                        data, addr = udp_socket.recvfrom(2048)
+                        executor.submit(process_and_send, data, producer)
+                    except socket.timeout:
+                        continue
             except KeyboardInterrupt:
                 logger.info("Interrupt received, shutting down.")
             finally:
