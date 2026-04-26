@@ -36,7 +36,8 @@ bronze_df = parse_kafka_json(raw_df, base_schema)
 query = bronze_df.writeStream \
     .format("delta") \
     .outputMode("append") \
-    .option("checkpointLocation", "/FileStore/checkpoints/bronze_telemetry") \
+    .option("checkpointLocation", "/tmp/checkpoints/bronze_telemetry") \
+    .trigger(availableNow=True) \
     .table("default.bronze_telemetry")
 
 # COMMAND ----------
