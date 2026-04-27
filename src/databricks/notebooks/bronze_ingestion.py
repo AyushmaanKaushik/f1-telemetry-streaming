@@ -22,7 +22,8 @@ base_schema = StructType([
     StructField("m_packetId", IntegerType(), True),
     StructField("m_playerCarIndex", IntegerType(), True),
     StructField("timestamp", StringType(), True),
-    StructField("raw_size", IntegerType(), True)
+    StructField("raw_size", IntegerType(), True),
+    StructField("data", StringType(), True)
 ])
 
 # COMMAND ----------
@@ -35,6 +36,6 @@ query = bronze_df.writeStream \
     .format("delta") \
     .outputMode("append") \
     .option("checkpointLocation", "/mnt/datalake/checkpoints/bronze_telemetry") \
-    .table("f1_catalog.bronze.telemetry")
+    .table("f1_catalog.bronze.bronze_telemetry")
 
 # COMMAND ----------
