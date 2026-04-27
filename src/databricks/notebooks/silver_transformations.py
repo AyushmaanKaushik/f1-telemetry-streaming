@@ -1,89 +1,142 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC # Silver Transformations
-# MAGIC Multiplexes Bronze stream into 4 Dedicated Silver Delta Tables
+# MAGIC
+# MAGIC Reads from `f1_catalog.bronze.bronze_telemetry` and fans out into 4 dedicated
+# MAGIC Silver Delta tables — one per F1 packet type.
+# MAGIC
+# MAGIC | Packet ID | Silver table            | Freq  |
+# MAGIC |-----------|-------------------------|-------|
+# MAGIC | 3         | silver_events           | Event |
+# MAGIC | 6         | silver_telemetry        | ~60Hz |
+# MAGIC | 7         | silver_status           | ~2Hz  |
+# MAGIC | 10        | silver_damage           | ~2Hz  |
+# MAGIC
+# MAGIC **Key principle**: Bronze fields are already flat (no JSON blob to parse).
+# MAGIC Silver simply filters rows and selects/renames the relevant columns.
 
 # COMMAND ----------
+# MAGIC %md ## 1. Configuration
 
-from pyspark.sql.functions import col, to_timestamp
-from pyspark.sql.types import *
+CHECKPOINT_BASE = "/tmp/checkpoints/silver"
+BRONZE_TABLE    = "f1_catalog.bronze.bronze_telemetry"
+
+# Silver output tables (Unity Catalog)
+SILVER_EVENTS    = "f1_catalog.silver.silver_events"
+SILVER_TELEMETRY = "f1_catalog.silver.silver_telemetry"
+SILVER_STATUS    = "f1_catalog.silver.silver_status"
+SILVER_DAMAGE    = "f1_catalog.silver.silver_damage"
 
 # COMMAND ----------
+# MAGIC %md ## 2. Read Bronze stream
 
-# Read from Local Community Edition Path (bypassing Unity Catalog and DBFS root locks)
-bronze_stream = spark.readStream.format("delta").load("/tmp/tables/bronze_telemetry")
+from pyspark.sql.functions import col
+
+bronze_stream = spark.readStream.table(BRONZE_TABLE)
 
 # COMMAND ----------
-# MAGIC %md
-# MAGIC ## Dedicated Silver Filtering
+# MAGIC %md ## 3a. Silver Events (Packet 3)
 
-# 1. Events (Packet 3)
-silver_events = bronze_stream.filter(col("m_packetId") == 3) \
+silver_events = (
+    bronze_stream
+    .filter(col("m_packetId") == 3)
     .select(
-        col("m_packetId").alias("packet_id"),
-        col("m_playerCarIndex").alias("car_index"),
-        to_timestamp("timestamp").alias("timestamp"),
-        col("data.eventStringCode").alias("event_code")
+        col("m_packetId").cast("int").alias("packet_id"),
+        col("m_playerCarIndex").cast("int").alias("car_index"),
+        col("timestamp"),
+        col("eventCode").alias("event_code"),
     )
+)
 
-query_events = silver_events.writeStream \
-    .format("delta").outputMode("append") \
-    .option("checkpointLocation", "/tmp/checkpoints/silver_events") \
-    .start("/tmp/tables/silver_events")
+query_events = (
+    silver_events.writeStream
+                 .format("delta")
+                 .outputMode("append")
+                 .option("checkpointLocation", f"{CHECKPOINT_BASE}/events")
+                 .toTable(SILVER_EVENTS)
+)
 
 # COMMAND ----------
-# 2. Telemetry (Packet 6)
-silver_telemetry = bronze_stream.filter(col("m_packetId") == 6) \
-    .select(
-        col("m_packetId").alias("packet_id"),
-        col("m_playerCarIndex").alias("car_index"),
-        to_timestamp("timestamp").alias("timestamp"),
-        col("data.speed").alias("speed_kmh"),
-        (col("data.engineRPM") / 15000.0).alias("engine_rpm_normalized"),
-        col("data.gear").alias("gear"),
-        col("data.throttle").alias("throttle"),
-        col("data.brake").alias("brake"),
-        col("data.engineTemperature").alias("engine_temperature")
-    )
+# MAGIC %md ## 3b. Silver Telemetry (Packet 6 — ~60Hz)
 
-query_telemetry = silver_telemetry.writeStream \
-    .format("delta").outputMode("append") \
-    .option("checkpointLocation", "/tmp/checkpoints/silver_telemetry") \
-    .start("/tmp/tables/silver_telemetry")
+silver_telemetry = (
+    bronze_stream
+    .filter(col("m_packetId") == 6)
+    .select(
+        col("m_packetId").cast("int").alias("packet_id"),
+        col("m_playerCarIndex").cast("int").alias("car_index"),
+        col("timestamp"),
+        col("speed_kmh").cast("float"),
+        (col("engine_rpm") / 15000.0).alias("engine_rpm_normalized"),
+        col("gear").cast("int"),
+        col("throttle").cast("float"),
+        col("brake").cast("float"),
+        col("engine_temperature").cast("int"),
+    )
+)
+
+query_telemetry = (
+    silver_telemetry.writeStream
+                    .format("delta")
+                    .outputMode("append")
+                    .option("checkpointLocation", f"{CHECKPOINT_BASE}/telemetry")
+                    .toTable(SILVER_TELEMETRY)
+)
 
 # COMMAND ----------
-# 3. Status (Packet 7)
-silver_status = bronze_stream.filter(col("m_packetId") == 7) \
-    .select(
-        col("m_packetId").alias("packet_id"),
-        col("m_playerCarIndex").alias("car_index"),
-        to_timestamp("timestamp").alias("timestamp"),
-        col("data.fuelInTank").alias("fuel_in_tank"),
-        col("data.ersStoreEnergy").alias("ers_energy"),
-        col("data.actualTyreCompound").cast("string").alias("tyre_compound"),
-        col("data.tyresAgeLaps").alias("tyre_age_laps"),
-        col("data.drsActivation").cast("boolean").alias("drs_activation")
-    )
+# MAGIC %md ## 3c. Silver Status (Packet 7 — ~2Hz)
 
-query_status = silver_status.writeStream \
-    .format("delta").outputMode("append") \
-    .option("checkpointLocation", "/tmp/checkpoints/silver_status") \
-    .start("/tmp/tables/silver_status")
+silver_status = (
+    bronze_stream
+    .filter(col("m_packetId") == 7)
+    .select(
+        col("m_packetId").cast("int").alias("packet_id"),
+        col("m_playerCarIndex").cast("int").alias("car_index"),
+        col("timestamp"),
+        col("fuel_in_tank").cast("float"),
+        col("ers_energy").cast("float"),
+        col("tyre_compound"),                         # already String ("C1", "C5" etc.)
+        col("tyre_age_laps").cast("int"),
+        col("drs_activation").cast("boolean"),
+    )
+)
+
+query_status = (
+    silver_status.writeStream
+                 .format("delta")
+                 .outputMode("append")
+                 .option("checkpointLocation", f"{CHECKPOINT_BASE}/status")
+                 .toTable(SILVER_STATUS)
+)
 
 # COMMAND ----------
-# 4. Damage (Packet 10)
-silver_damage = bronze_stream.filter(col("m_packetId") == 10) \
-    .select(
-        col("m_packetId").alias("packet_id"),
-        col("m_playerCarIndex").alias("car_index"),
-        to_timestamp("timestamp").alias("timestamp"),
-        col("data.frontLeftWingDamage").alias("front_wing_damage"), 
-        col("data.rearWingDamage").alias("rear_wing_damage"),
-        col("data.engineDamage").alias("engine_wear"),
-        col("data.tyresDamage").getItem(0).alias("tyre_wear") 
-    )
+# MAGIC %md ## 3d. Silver Damage (Packet 10 — ~2Hz)
 
-query_damage = silver_damage.writeStream \
-    .format("delta").outputMode("append") \
-    .option("checkpointLocation", "/tmp/checkpoints/silver_damage") \
-    .start("/tmp/tables/silver_damage")
+silver_damage = (
+    bronze_stream
+    .filter(col("m_packetId") == 10)
+    .select(
+        col("m_packetId").cast("int").alias("packet_id"),
+        col("m_playerCarIndex").cast("int").alias("car_index"),
+        col("timestamp"),
+        col("front_wing_damage").cast("float"),
+        col("rear_wing_damage").cast("float"),
+        col("engine_wear").cast("float"),
+        col("tyre_wear").cast("float"),
+    )
+)
+
+query_damage = (
+    silver_damage.writeStream
+                 .format("delta")
+                 .outputMode("append")
+                 .option("checkpointLocation", f"{CHECKPOINT_BASE}/damage")
+                 .toTable(SILVER_DAMAGE)
+)
+
+# COMMAND ----------
+print("All 4 Silver streams started:")
+print(f"  Events    → {SILVER_EVENTS}")
+print(f"  Telemetry → {SILVER_TELEMETRY}")
+print(f"  Status    → {SILVER_STATUS}")
+print(f"  Damage    → {SILVER_DAMAGE}")
