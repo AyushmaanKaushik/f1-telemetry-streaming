@@ -1,41 +1,36 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC # Silver Transformations
+# MAGIC Reads `f1_catalog.bronze.bronze_telemetry` and fans out into 4 typed Silver Delta tables.
 # MAGIC
-# MAGIC Reads from `f1_catalog.bronze.bronze_telemetry` and fans out into 4 dedicated
-# MAGIC Silver Delta tables — one per F1 packet type.
-# MAGIC
-# MAGIC | Packet ID | Silver table            | Freq  |
-# MAGIC |-----------|-------------------------|-------|
-# MAGIC | 3         | silver_events           | Event |
-# MAGIC | 6         | silver_telemetry        | ~60Hz |
-# MAGIC | 7         | silver_status           | ~2Hz  |
-# MAGIC | 10        | silver_damage           | ~2Hz  |
-# MAGIC
-# MAGIC **Key principle**: Bronze fields are already flat (no JSON blob to parse).
-# MAGIC Silver simply filters rows and selects/renames the relevant columns.
+# MAGIC | Packet ID | Silver table         | Freq  |
+# MAGIC |-----------|----------------------|-------|
+# MAGIC | 3         | silver_events        | Event |
+# MAGIC | 6         | silver_telemetry     | ~60Hz |
+# MAGIC | 7         | silver_status        | ~2Hz  |
+# MAGIC | 10        | silver_damage        | ~2Hz  |
 
 # COMMAND ----------
-# MAGIC %md ## 1. Configuration
 
-CHECKPOINT_BASE = "/tmp/checkpoints/silver"
-BRONZE_TABLE    = "f1_catalog.bronze.bronze_telemetry"
+CHECKPOINT_BASE  = "/tmp/checkpoints/silver"
+BRONZE_TABLE     = "f1_catalog.bronze.bronze_telemetry"
 
-# Silver output tables (Unity Catalog)
 SILVER_EVENTS    = "f1_catalog.silver.silver_events"
 SILVER_TELEMETRY = "f1_catalog.silver.silver_telemetry"
 SILVER_STATUS    = "f1_catalog.silver.silver_status"
 SILVER_DAMAGE    = "f1_catalog.silver.silver_damage"
 
 # COMMAND ----------
-# MAGIC %md ## 2. Read Bronze stream
 
 from pyspark.sql.functions import col
 
 bronze_stream = spark.readStream.table(BRONZE_TABLE)
 
 # COMMAND ----------
-# MAGIC %md ## 3a. Silver Events (Packet 3)
+# MAGIC %md
+# MAGIC ## Packet 3 — Events
+
+# COMMAND ----------
 
 silver_events = (
     bronze_stream
@@ -57,7 +52,10 @@ query_events = (
 )
 
 # COMMAND ----------
-# MAGIC %md ## 3b. Silver Telemetry (Packet 6 — ~60Hz)
+# MAGIC %md
+# MAGIC ## Packet 6 — Car Telemetry (~60 Hz)
+
+# COMMAND ----------
 
 silver_telemetry = (
     bronze_stream
@@ -84,7 +82,10 @@ query_telemetry = (
 )
 
 # COMMAND ----------
-# MAGIC %md ## 3c. Silver Status (Packet 7 — ~2Hz)
+# MAGIC %md
+# MAGIC ## Packet 7 — Car Status (~2 Hz)
+
+# COMMAND ----------
 
 silver_status = (
     bronze_stream
@@ -95,7 +96,7 @@ silver_status = (
         col("timestamp"),
         col("fuel_in_tank").cast("float"),
         col("ers_energy").cast("float"),
-        col("tyre_compound"),                         # already String ("C1", "C5" etc.)
+        col("tyre_compound"),
         col("tyre_age_laps").cast("int"),
         col("drs_activation").cast("boolean"),
     )
@@ -110,7 +111,10 @@ query_status = (
 )
 
 # COMMAND ----------
-# MAGIC %md ## 3d. Silver Damage (Packet 10 — ~2Hz)
+# MAGIC %md
+# MAGIC ## Packet 10 — Car Damage (~2 Hz)
+
+# COMMAND ----------
 
 silver_damage = (
     bronze_stream
@@ -135,6 +139,7 @@ query_damage = (
 )
 
 # COMMAND ----------
+
 print("All 4 Silver streams started:")
 print(f"  Events    → {SILVER_EVENTS}")
 print(f"  Telemetry → {SILVER_TELEMETRY}")

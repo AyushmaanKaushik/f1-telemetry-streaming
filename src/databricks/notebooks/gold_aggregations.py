@@ -1,23 +1,18 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC # Gold Layer Aggregations
+# MAGIC Reads from the four Silver Delta tables and produces 4 Gold datamarts for dashboard widgets.
 # MAGIC
-# MAGIC Reads from the four Silver Delta tables and builds 4 Gold datamarts
-# MAGIC designed for Databricks SQL Dashboard widgets:
-# MAGIC
-# MAGIC | Gold table               | Source(s)                      | Metric                          |
-# MAGIC |--------------------------|--------------------------------|---------------------------------|
-# MAGIC | `gold_distances`         | silver_telemetry               | Distance + avg speed / 1s window|
-# MAGIC | `gold_vehicle_health`    | silver_status + silver_damage  | Latest health snapshot          |
-# MAGIC | `gold_tyre_degradation`  | silver_telemetry + silver_damage | Wear vs distance / per compound|
-# MAGIC | `gold_driver_gaps`       | silver_telemetry               | Gap to race leader in meters    |
-# MAGIC
-# MAGIC All tumbling windows are 1 second. Watermark is 2 seconds to handle late data.
+# MAGIC | Gold table              | Source(s)                       | Metric                             |
+# MAGIC |-------------------------|---------------------------------|------------------------------------|
+# MAGIC | `gold_distances`        | silver_telemetry                | Distance + avg speed per 1s window |
+# MAGIC | `gold_vehicle_health`   | silver_status + silver_damage   | Latest health snapshot             |
+# MAGIC | `gold_tyre_degradation` | silver_telemetry + silver_damage| Wear vs distance per compound      |
+# MAGIC | `gold_driver_gaps`      | silver_telemetry                | Gap to race leader in meters       |
 
 # COMMAND ----------
-# MAGIC %md ## 1. Configuration
 
-CHECKPOINT_BASE = "/tmp/checkpoints/gold"
+CHECKPOINT_BASE  = "/tmp/checkpoints/gold"
 
 SILVER_TELEMETRY = "f1_catalog.silver.silver_telemetry"
 SILVER_STATUS    = "f1_catalog.silver.silver_status"
@@ -28,12 +23,14 @@ GOLD_HEALTH      = "f1_catalog.gold.gold_vehicle_health"
 GOLD_TYRE_DEG    = "f1_catalog.gold.gold_tyre_degradation"
 GOLD_GAPS        = "f1_catalog.gold.gold_driver_gaps"
 
-# COMMAND ----------
-# MAGIC %md ## 2. Load Silver streams
+# 60 Hz sampling → dt ≈ 0.01667 s per packet
+DT_SECONDS = 1 / 60.0
 
-from pyspark.sql.functions import (
-    col, window, sum as _sum, avg, max as _max, min as _min, expr
-)
+# COMMAND ----------
+
+from pyspark.sql.functions import col, window, sum as _sum, avg, max as _max
+import pyspark.sql.functions as F
+from pyspark.sql.window import Window
 
 s_telemetry = spark.readStream.table(SILVER_TELEMETRY)
 s_status    = spark.readStream.table(SILVER_STATUS)
@@ -41,22 +38,15 @@ s_damage    = spark.readStream.table(SILVER_DAMAGE)
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## 3a. Gold: Driver Distances (`gold_distances`)
-# MAGIC
-# MAGIC Physics: distance_delta (m) = speed (m/s) × dt
-# MAGIC At ~60 Hz, dt ≈ 1/60 s ≈ 0.01667 s
-# MAGIC speed_kmh → m/s: divide by 3.6
+# MAGIC ## Gold: Driver Distances
 
-DT_SECONDS = 1 / 60.0  # 60 Hz sampling rate
+# COMMAND ----------
 
 distances = (
     s_telemetry
     .withWatermark("timestamp", "2 seconds")
     .withColumn("distance_delta_m", (col("speed_kmh") / 3.6) * DT_SECONDS)
-    .groupBy(
-        window(col("timestamp"), "1 second"),
-        col("car_index"),
-    )
+    .groupBy(window(col("timestamp"), "1 second"), col("car_index"))
     .agg(
         _sum("distance_delta_m").alias("segment_distance"),
         avg("speed_kmh").alias("avg_speed"),
@@ -73,12 +63,9 @@ query_distances = (
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## 3b. Gold: Vehicle Health (`gold_vehicle_health`)
-# MAGIC
-# MAGIC Takes the worst-case (max) reading within each 1-second window
-# MAGIC across both Status and Damage silver tables.
-# MAGIC
-# MAGIC Note: stream-stream joins require both sides to have a watermark.
+# MAGIC ## Gold: Vehicle Health
+
+# COMMAND ----------
 
 status_agg = (
     s_status
@@ -106,7 +93,8 @@ damage_agg = (
 )
 
 vehicle_health = (
-    status_agg.join(damage_agg, on=["window", "car_index"], how="inner")
+    status_agg
+    .join(damage_agg, on=["window", "car_index"], how="inner")
     .select(
         col("car_index"),
         col("window.end").alias("last_updated"),
@@ -130,11 +118,9 @@ query_health = (
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## 3c. Gold: Tyre Degradation (`gold_tyre_degradation`)
-# MAGIC
-# MAGIC Measures average tyre wear per unit distance traveled,
-# MAGIC grouped by tyre compound and car. Uses a stream-stream join
-# MAGIC between the telemetry-derived distance and the damage tyre wear.
+# MAGIC ## Gold: Tyre Degradation
+
+# COMMAND ----------
 
 telem_dist = (
     s_telemetry
@@ -144,7 +130,6 @@ telem_dist = (
     .agg(_sum("distance_delta_m").alias("distance_traveled_m"))
 )
 
-# Pull tyre_compound from silver_status (same 1s window, same car)
 status_compound = (
     s_status
     .withWatermark("timestamp", "2 seconds")
@@ -159,7 +144,6 @@ damage_wear = (
     .agg(avg("tyre_wear").alias("average_wear_pct"))
 )
 
-# Join all three: distance + compound + wear
 tyre_deg = (
     telem_dist
     .join(damage_wear,     on=["window", "car_index"], how="inner")
@@ -183,23 +167,16 @@ query_tyre_deg = (
 
 # COMMAND ----------
 # MAGIC %md
-# MAGIC ## 3d. Gold: Head-to-Head Gaps (`gold_driver_gaps`)
+# MAGIC ## Gold: Head-to-Head Driver Gaps
 # MAGIC
-# MAGIC Computes cumulative distance per car per 1s window, then derives
-# MAGIC the gap to the leader (car with maximum distance in that window).
-# MAGIC
-# MAGIC Note: Structured Streaming does not support self-joins, so we use
-# MAGIC a batch-style `foreachBatch` to compute gaps at write time.
+# MAGIC Structured Streaming does not support stream-stream self-joins, so we use
+# MAGIC `foreachBatch` to compute the gap to the race leader within each micro-batch.
+
+# COMMAND ----------
 
 from pyspark.sql import DataFrame
-from pyspark.sql.window import Window
-import pyspark.sql.functions as F
 
 def compute_gaps(batch_df: DataFrame, batch_id: int):
-    """
-    Called for each micro-batch of the distance aggregation.
-    Computes gap_to_leader and writes to Gold delta table.
-    """
     if batch_df.rdd.isEmpty():
         return
 
@@ -219,7 +196,7 @@ def compute_gaps(batch_df: DataFrame, batch_id: int):
 
     gaps.write.format("delta").mode("append").saveAsTable(GOLD_GAPS)
 
-# Re-use the distance aggregation stream (separate query, new checkpoint)
+
 distances_for_gaps = (
     s_telemetry
     .withWatermark("timestamp", "2 seconds")
@@ -237,6 +214,7 @@ query_gaps = (
 )
 
 # COMMAND ----------
+
 print("All 4 Gold streams started:")
 print(f"  Distances        → {GOLD_DISTANCES}")
 print(f"  Vehicle Health   → {GOLD_HEALTH}")
