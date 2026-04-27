@@ -31,11 +31,11 @@ description: "Task list execution trace for Dashboard Models"
 
 ### Implementation for User Story 1
 
-- [ ] T003 [P] [US1] Create Silver Telemetry 60Hz filter definition in `src/databricks/notebooks/silver_transformations.py`
-- [ ] T004 [P] [US1] Create Silver Status filter definition in `src/databricks/notebooks/silver_transformations.py`
-- [ ] T005 [P] [US1] Create Silver Event filter definition in `src/databricks/notebooks/silver_transformations.py`
-- [ ] T006 [P] [US1] Create Silver Damage filter definition in `src/databricks/notebooks/silver_transformations.py`
-- [ ] T007 [US1] Build PySpark `forEachBatch` router to natively distribute the Bronze stream into the 4 Silver tables in `src/databricks/notebooks/silver_transformations.py`
+- [x] T003 [P] [US1] Create Silver Telemetry 60Hz filter definition in `src/databricks/notebooks/silver_transformations.py`
+- [x] T004 [P] [US1] Create Silver Status filter definition in `src/databricks/notebooks/silver_transformations.py`
+- [x] T005 [P] [US1] Create Silver Event filter definition in `src/databricks/notebooks/silver_transformations.py`
+- [x] T006 [P] [US1] Create Silver Damage filter definition in `src/databricks/notebooks/silver_transformations.py`
+- [x] T007 [US1] Build PySpark `forEachBatch` router to natively distribute the Bronze stream into the 4 Silver tables in `src/databricks/notebooks/silver_transformations.py`
 
 **Checkpoint**: At this point, User Story 1 should cleanly separate the blob output. 
 
@@ -49,13 +49,13 @@ description: "Task list execution trace for Dashboard Models"
 
 ### Tests for User Story 2
 
-- [ ] T008 [P] [US2] Implement PySpark window equivalence tests in `tests/databricks/test_aggregations.py`
+- [x] T008 [P] [US2] Implement PySpark window equivalence tests in `tests/databricks/test_aggregations.py`
 
 ### Implementation for User Story 2
 
-- [ ] T009 [P] [US2] Implement Vehicle Health State Tracking script caching the latest damage vs status arrays in `src/databricks/notebooks/gold_aggregations.py`
-- [ ] T010 [P] [US2] Build `speed_kmh` to distance tracking math (Tumbling Window) for live Driver Gaps in `src/databricks/notebooks/gold_aggregations.py`
-- [ ] T011 [P] [US2] Build `distance_traveled_m` vs `tyre_wear_pct` Aggregation logic in `src/databricks/notebooks/gold_aggregations.py`
+- [x] T009 [P] [US2] Implement Vehicle Health State Tracking script caching the latest damage vs status arrays in `src/databricks/notebooks/gold_aggregations.py`
+- [x] T010 [P] [US2] Build `speed_kmh` to distance tracking math (Tumbling Window) for live Driver Gaps in `src/databricks/notebooks/gold_aggregations.py`
+- [x] T011 [P] [US2] Build `distance_traveled_m` vs `tyre_wear_pct` Aggregation logic in `src/databricks/notebooks/gold_aggregations.py`
 
 **Checkpoint**: At this point, the entire Medalion path completes!
 
