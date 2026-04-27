@@ -1,4 +1,8 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "2"
+# ///
 # MAGIC %md
 # MAGIC # Bronze Ingestion: Raw Telemetry Stream
 # MAGIC Reads raw F1 telemetry JSON from Azure Event Hub and lands it into `f1_catalog.bronze.bronze_telemetry`.
