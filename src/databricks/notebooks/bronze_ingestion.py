@@ -13,7 +13,7 @@ EH_NAMESPACE = dbutils.secrets.get(scope="f1_scope", key="eventhub_namespace")  
 EH_NAME      = dbutils.secrets.get(scope="f1_scope", key="eventhub_name")        # topic name
 EH_CONN_STR  = dbutils.secrets.get(scope="f1_scope", key="eventhub_conn_str")    # full connection string
 
-CHECKPOINT_DIR = "/tmp/checkpoints/bronze_telemetry"
+CHECKPOINT_DIR = "/Volumes/f1_catalog/bronze/checkpoints/bronze_telemetry"
 BRONZE_TABLE   = "f1_catalog.bronze.bronze_telemetry"
 
 # COMMAND ----------
@@ -92,13 +92,20 @@ bronze_df = (
 
 # COMMAND ----------
 
+# DBTITLE 1,Cell 6
 query = (
     bronze_df.writeStream
              .format("delta")
              .outputMode("append")
              .option("checkpointLocation", CHECKPOINT_DIR)
              .option("mergeSchema", "true")
+             .trigger(availableNow=True)
              .toTable(BRONZE_TABLE)
 )
 
 print(f"Bronze stream started → {BRONZE_TABLE}")
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC select * from f1_catalog.bronze.bronze_telemetry order by timestamp desc

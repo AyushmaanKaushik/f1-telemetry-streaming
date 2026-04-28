@@ -12,7 +12,13 @@
 
 # COMMAND ----------
 
-CHECKPOINT_BASE  = "/tmp/checkpoints/gold"
+# MAGIC %sql
+# MAGIC CREATE SCHEMA IF NOT EXISTS f1_catalog.gold;
+# MAGIC CREATE VOLUME IF NOT EXISTS f1_catalog.gold.checkpoints;
+
+# COMMAND ----------
+
+CHECKPOINT_BASE  = "/Volumes/f1_catalog/silver/checkpoints"
 
 SILVER_TELEMETRY = "f1_catalog.silver.silver_telemetry"
 SILVER_STATUS    = "f1_catalog.silver.silver_status"
@@ -37,13 +43,16 @@ s_status    = spark.readStream.table(SILVER_STATUS)
 s_damage    = spark.readStream.table(SILVER_DAMAGE)
 
 # COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## Gold: Driver Distances
 
 # COMMAND ----------
 
+# DBTITLE 1,Cell 6
 distances = (
     s_telemetry
+    .withColumn("timestamp", col("timestamp").cast("timestamp"))
     .withWatermark("timestamp", "2 seconds")
     .withColumn("distance_delta_m", (col("speed_kmh") / 3.6) * DT_SECONDS)
     .groupBy(window(col("timestamp"), "1 second"), col("car_index"))
@@ -58,10 +67,12 @@ query_distances = (
              .format("delta")
              .outputMode("append")
              .option("checkpointLocation", f"{CHECKPOINT_BASE}/distances")
+             .trigger(availableNow=True)
              .toTable(GOLD_DISTANCES)
 )
 
 # COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## Gold: Vehicle Health
 
@@ -69,6 +80,7 @@ query_distances = (
 
 status_agg = (
     s_status
+    .withColumn("timestamp", col("timestamp").cast("timestamp"))
     .withWatermark("timestamp", "2 seconds")
     .groupBy(window(col("timestamp"), "1 second"), col("car_index"))
     .agg(
@@ -82,6 +94,7 @@ status_agg = (
 
 damage_agg = (
     s_damage
+    .withColumn("timestamp", col("timestamp").cast("timestamp"))
     .withWatermark("timestamp", "2 seconds")
     .groupBy(window(col("timestamp"), "1 second"), col("car_index"))
     .agg(
@@ -113,10 +126,12 @@ query_health = (
                   .format("delta")
                   .outputMode("append")
                   .option("checkpointLocation", f"{CHECKPOINT_BASE}/vehicle_health")
+                  .trigger(availableNow=True)
                   .toTable(GOLD_HEALTH)
 )
 
 # COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## Gold: Tyre Degradation
 
@@ -124,6 +139,7 @@ query_health = (
 
 telem_dist = (
     s_telemetry
+    .withColumn("timestamp", col("timestamp").cast("timestamp"))
     .withWatermark("timestamp", "2 seconds")
     .withColumn("distance_delta_m", (col("speed_kmh") / 3.6) * DT_SECONDS)
     .groupBy(window(col("timestamp"), "1 second"), col("car_index"))
@@ -132,6 +148,7 @@ telem_dist = (
 
 status_compound = (
     s_status
+    .withColumn("timestamp", col("timestamp").cast("timestamp"))
     .withWatermark("timestamp", "2 seconds")
     .groupBy(window(col("timestamp"), "1 second"), col("car_index"))
     .agg(_max("tyre_compound").alias("tyre_compound"))
@@ -139,6 +156,7 @@ status_compound = (
 
 damage_wear = (
     s_damage
+    .withColumn("timestamp", col("timestamp").cast("timestamp"))
     .withWatermark("timestamp", "2 seconds")
     .groupBy(window(col("timestamp"), "1 second"), col("car_index"))
     .agg(avg("tyre_wear").alias("average_wear_pct"))
@@ -162,10 +180,12 @@ query_tyre_deg = (
             .format("delta")
             .outputMode("append")
             .option("checkpointLocation", f"{CHECKPOINT_BASE}/tyre_degradation")
+            .trigger(availableNow=True)
             .toTable(GOLD_TYRE_DEG)
 )
 
 # COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## Gold: Head-to-Head Driver Gaps
 # MAGIC
@@ -174,12 +194,10 @@ query_tyre_deg = (
 
 # COMMAND ----------
 
+# DBTITLE 1,Cell 12
 from pyspark.sql import DataFrame
 
 def compute_gaps(batch_df: DataFrame, batch_id: int):
-    if batch_df.rdd.isEmpty():
-        return
-
     w = Window.partitionBy("window").orderBy(F.desc("segment_distance"))
 
     gaps = (
@@ -199,6 +217,7 @@ def compute_gaps(batch_df: DataFrame, batch_id: int):
 
 distances_for_gaps = (
     s_telemetry
+    .withColumn("timestamp", col("timestamp").cast("timestamp"))
     .withWatermark("timestamp", "2 seconds")
     .withColumn("distance_delta_m", (col("speed_kmh") / 3.6) * DT_SECONDS)
     .groupBy(window(col("timestamp"), "1 second"), col("car_index"))
@@ -209,7 +228,7 @@ query_gaps = (
     distances_for_gaps.writeStream
                       .foreachBatch(compute_gaps)
                       .option("checkpointLocation", f"{CHECKPOINT_BASE}/driver_gaps")
-                      .trigger(processingTime="1 second")
+                      .trigger(availableNow=True)
                       .start()
 )
 
