@@ -12,7 +12,7 @@
 
 # COMMAND ----------
 
-CHECKPOINT_BASE  = "/tmp/checkpoints/silver"
+CHECKPOINT_BASE  = "/Volumes/f1_catalog/silver/checkpoints"
 BRONZE_TABLE     = "f1_catalog.bronze.bronze_telemetry"
 
 SILVER_EVENTS    = "f1_catalog.silver.silver_events"
@@ -27,6 +27,7 @@ from pyspark.sql.functions import col
 bronze_stream = spark.readStream.table(BRONZE_TABLE)
 
 # COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## Packet 3 — Events
 
@@ -48,10 +49,12 @@ query_events = (
                  .format("delta")
                  .outputMode("append")
                  .option("checkpointLocation", f"{CHECKPOINT_BASE}/events")
+                 .trigger(availableNow=True)
                  .toTable(SILVER_EVENTS)
 )
 
 # COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## Packet 6 — Car Telemetry (~60 Hz)
 
@@ -78,10 +81,12 @@ query_telemetry = (
                     .format("delta")
                     .outputMode("append")
                     .option("checkpointLocation", f"{CHECKPOINT_BASE}/telemetry")
+                    .trigger(availableNow=True)
                     .toTable(SILVER_TELEMETRY)
 )
 
 # COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## Packet 7 — Car Status (~2 Hz)
 
@@ -107,10 +112,12 @@ query_status = (
                  .format("delta")
                  .outputMode("append")
                  .option("checkpointLocation", f"{CHECKPOINT_BASE}/status")
+                 .trigger(availableNow=True)
                  .toTable(SILVER_STATUS)
 )
 
 # COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## Packet 10 — Car Damage (~2 Hz)
 
@@ -135,6 +142,7 @@ query_damage = (
                  .format("delta")
                  .outputMode("append")
                  .option("checkpointLocation", f"{CHECKPOINT_BASE}/damage")
+                 .trigger(availableNow=True)
                  .toTable(SILVER_DAMAGE)
 )
 
@@ -145,3 +153,8 @@ print(f"  Events    → {SILVER_EVENTS}")
 print(f"  Telemetry → {SILVER_TELEMETRY}")
 print(f"  Status    → {SILVER_STATUS}")
 print(f"  Damage    → {SILVER_DAMAGE}")
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC select * from f1_catalog.silver.silver_telemetry;
