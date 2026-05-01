@@ -35,7 +35,7 @@ def display_recent_records(schema_name):
             elif "last_updated" in cols:
                 order_by = "ORDER BY last_updated DESC"
                 
-            query = f"SELECT * FROM {full_table_name} {order_by} LIMIT 100"
+            query = f"SELECT * FROM {full_table_name} {order_by} LIMIT 50"
             display(spark.sql(query))
             
     except Exception as e:

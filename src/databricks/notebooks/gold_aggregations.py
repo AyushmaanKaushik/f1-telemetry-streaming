@@ -18,7 +18,7 @@
 
 # COMMAND ----------
 
-CHECKPOINT_BASE  = "/Volumes/f1_catalog/silver/checkpoints"
+CHECKPOINT_BASE  = "/Volumes/f1_catalog/gold/checkpoints"
 
 SILVER_TELEMETRY = "f1_catalog.silver.silver_telemetry"
 SILVER_STATUS    = "f1_catalog.silver.silver_status"
@@ -50,6 +50,7 @@ s_damage    = spark.readStream.table(SILVER_DAMAGE)
 # COMMAND ----------
 
 # DBTITLE 1,Cell 6
+# Batch 1: Start distances stream (no await)
 distances = (
     s_telemetry
     .withColumn("timestamp", col("timestamp").cast("timestamp"))
@@ -71,6 +72,8 @@ query_distances = (
              .toTable(GOLD_DISTANCES)
 )
 
+print(f"✓ Started distances stream (1/2)...")
+
 # COMMAND ----------
 
 # MAGIC %md
@@ -78,6 +81,8 @@ query_distances = (
 
 # COMMAND ----------
 
+# DBTITLE 1,Cell 8
+# Batch 1: Start vehicle health stream and wait for both
 status_agg = (
     s_status
     .withColumn("timestamp", col("timestamp").cast("timestamp"))
@@ -130,6 +135,13 @@ query_health = (
                   .toTable(GOLD_HEALTH)
 )
 
+print(f"✓ Started vehicle health stream (2/2)...")
+print(f"Waiting for batch 1 (distances + vehicle health) to complete...")
+query_distances.awaitTermination()
+query_health.awaitTermination()
+print(f"✅ Batch 1 completed")
+print()
+
 # COMMAND ----------
 
 # MAGIC %md
@@ -137,6 +149,8 @@ query_health = (
 
 # COMMAND ----------
 
+# DBTITLE 1,Cell 10
+# Batch 2: Start tyre degradation stream (no await)
 telem_dist = (
     s_telemetry
     .withColumn("timestamp", col("timestamp").cast("timestamp"))
@@ -184,6 +198,8 @@ query_tyre_deg = (
             .toTable(GOLD_TYRE_DEG)
 )
 
+print(f"✓ Started tyre degradation stream (1/2)...")
+
 # COMMAND ----------
 
 # MAGIC %md
@@ -195,6 +211,7 @@ query_tyre_deg = (
 # COMMAND ----------
 
 # DBTITLE 1,Cell 12
+# Batch 2: Start driver gaps stream and wait for both
 from pyspark.sql import DataFrame
 
 def compute_gaps(batch_df: DataFrame, batch_id: int):
@@ -232,15 +249,28 @@ query_gaps = (
                       .start()
 )
 
-# COMMAND ----------
-
-print("All 4 Gold streams started:")
-print(f"  Distances        → {GOLD_DISTANCES}")
-print(f"  Vehicle Health   → {GOLD_HEALTH}")
-print(f"  Tyre Degradation → {GOLD_TYRE_DEG}")
-print(f"  Driver Gaps      → {GOLD_GAPS}")
+print(f"✓ Started driver gaps stream (2/2)...")
+print(f"Waiting for batch 2 (tyre degradation + driver gaps) to complete...")
+query_tyre_deg.awaitTermination()
+query_gaps.awaitTermination()
+print(f"✅ Batch 2 completed")
 
 # COMMAND ----------
+
+# DBTITLE 1,Cell 13
+print("\n" + "="*60)
+print("✅ All 4 Gold streams completed successfully!")
+print("="*60)
+print(f"  Batch 1: Distances + Vehicle Health")
+print(f"    • {GOLD_DISTANCES}")
+print(f"    • {GOLD_HEALTH}")
+print(f"  Batch 2: Tyre Degradation + Driver Gaps")
+print(f"    • {GOLD_TYRE_DEG}")
+print(f"    • {GOLD_GAPS}")
+print("="*60)
+
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## Dashboard Readiness Validation
 # MAGIC
