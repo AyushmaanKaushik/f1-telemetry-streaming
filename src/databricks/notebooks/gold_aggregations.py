@@ -239,3 +239,46 @@ print(f"  Distances        → {GOLD_DISTANCES}")
 print(f"  Vehicle Health   → {GOLD_HEALTH}")
 print(f"  Tyre Degradation → {GOLD_TYRE_DEG}")
 print(f"  Driver Gaps      → {GOLD_GAPS}")
+
+# COMMAND ----------
+# MAGIC %md
+# MAGIC ## Dashboard Readiness Validation
+# MAGIC
+# MAGIC Run this cell **after** the Gold streams have been active for at least 30 seconds.
+# MAGIC It confirms all four Gold tables are populated before wiring up the SQL Dashboard widgets.
+# MAGIC **All counts must be > 0 before proceeding to dashboard creation.**
+
+# COMMAND ----------
+
+validation_tables = [
+    ("gold_driver_gaps",       GOLD_GAPS),
+    ("gold_vehicle_health",    GOLD_HEALTH),
+    ("gold_tyre_degradation",  GOLD_TYRE_DEG),
+    ("gold_distances",         GOLD_DISTANCES),
+]
+
+all_pass = True
+print("=" * 55)
+print("  Dashboard Readiness Check")
+print("=" * 55)
+
+for short_name, full_name in validation_tables:
+    try:
+        count = spark.read.table(full_name).count()
+        status = "✅ PASS" if count > 0 else "❌ FAIL (0 rows)"
+        if count == 0:
+            all_pass = False
+    except Exception as e:
+        status = f"❌ ERROR ({e})"
+        all_pass = False
+    print(f"  {short_name:<28} {count:>6} rows   {status}")
+
+print("=" * 55)
+if all_pass:
+    print("  ✅ All tables populated — safe to deploy dashboard.")
+else:
+    print("  ❌ Some tables are empty. Wait for streams to produce")
+    print("     data (run synthetic_generator for 30+ seconds),")
+    print("     then re-run this cell before building the dashboard.")
+    raise AssertionError("Gold tables not yet populated — dashboard deployment blocked.")
+
