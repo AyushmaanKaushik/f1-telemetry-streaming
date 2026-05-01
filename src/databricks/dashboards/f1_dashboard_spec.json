@@ -1,0 +1,61 @@
+{
+  "datasets": [
+    {
+      "name": "driver_gaps",
+      "displayName": "Live Driver Gaps",
+      "query": "WITH latest_window AS (\n  SELECT MAX(window.end) AS max_ts\n  FROM f1_catalog.gold.gold_driver_gaps\n)\nSELECT\n  CONCAT('Car ', LPAD(CAST(g.car_index AS STRING), 2, '0')) AS car_label,\n  g.car_index,\n  ROUND(g.gap_to_leader_m, 1) AS gap_to_leader_m,\n  ROUND(g.segment_distance, 1) AS segment_distance_m\nFROM f1_catalog.gold.gold_driver_gaps g\nJOIN latest_window lw\n  ON g.window.end = lw.max_ts\nORDER BY g.gap_to_leader_m ASC"
+    }
+  ],
+  "pages": [
+    {
+      "name": "f1_main_page",
+      "displayName": "F1 Live Telemetry",
+      "layout": [
+        {
+          "widget": {
+            "name": "driver_gaps_chart",
+            "title": "Driver Position Gaps",
+            "description": "Distance behind the race leader per car (latest 1-second window). Leader = 0 m.",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "driver_gaps",
+                  "fields": [
+                    { "name": "car_label",       "expression": "`car_label`" },
+                    { "name": "gap_to_leader_m", "expression": "`gap_to_leader_m`" }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "gap_to_leader_m",
+                  "displayName": "Gap to Leader (m)",
+                  "scale": { "type": "quantitative" },
+                  "axis":  { "title": "Gap to Leader (metres)" }
+                },
+                "y": {
+                  "fieldName": "car_label",
+                  "displayName": "Car",
+                  "scale": { "type": "ordinal" },
+                  "axis":  { "title": "Car" },
+                  "sort":  "ascending"
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Driver Position Gaps"
+              }
+            }
+          },
+          "position": { "x": 0, "y": 0, "width": 6, "height": 4 }
+        }
+      ]
+    }
+  ]
+}
