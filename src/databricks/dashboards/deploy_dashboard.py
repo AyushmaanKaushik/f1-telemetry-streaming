@@ -60,7 +60,7 @@ def run_cli(args: list[str]) -> dict:
     """Run a Databricks CLI command and return the parsed JSON output."""
     cmd = ["databricks"] + args + ["--output", "json"]
     print(f"Running: {' '.join(cmd)}")
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
     if result.returncode != 0:
         print(f"ERROR: CLI command failed:\n{result.stderr}")
         sys.exit(result.returncode)

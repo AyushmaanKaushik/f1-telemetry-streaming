@@ -58,7 +58,7 @@ def sync_notebooks():
         local_path = LOCAL_NB_DIR / nb
         remote_path = f"{WORKSPACE_DIR}/{nb.replace('.py', '')}"
         
-        print(f"  Uploading {nb}...")
+        print(f"  Uploading {local_path} to {remote_path}...")
         # Import file as a PYTHON format notebook. The remote path is the positional arg, local is --file.
         res = subprocess.run([
             "databricks", "workspace", "import", 
@@ -136,9 +136,20 @@ def deploy_job():
         job_id = get_existing_job_id()
         if job_id:
             print(f"\nUpdating existing job: {job_id}")
-            # Reset the job with the new definition
-            run_cli(["jobs", "reset", str(job_id), "--json", f"@{tmp_path}"])
-            print(f"✅ Job updated successfully! ID: {job_id}")
+            # The reset API requires job_id and new_settings
+            reset_payload = {
+                "job_id": job_id,
+                "new_settings": job_definition
+            }
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as reset_tmp:
+                json.dump(reset_payload, reset_tmp)
+                reset_tmp_path = reset_tmp.name
+            
+            try:
+                run_cli(["jobs", "reset", "--json", f"@{reset_tmp_path}"])
+                print(f"✅ Job updated successfully! ID: {job_id}")
+            finally:
+                os.unlink(reset_tmp_path)
         else:
             print("\nCreating new job...")
             response = run_cli(["jobs", "create", "--json", f"@{tmp_path}"])
