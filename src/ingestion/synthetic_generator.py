@@ -77,7 +77,7 @@ def generate_body(packet_idx: int) -> bytes:
 def simulate_telemetry(udp_socket: socket.socket, duration_seconds: int = None):
     """Generates 1Hz burst of packets for all 20 cars to push to the listener."""
     print(f"Starting F1 Telemetry Simulation -> UDP {HOST}:{PORT}")
-    target_fps = 2
+    target_fps = 0.05
     sleep_time = 1.0 / target_fps
     
     start_time = time.time()
