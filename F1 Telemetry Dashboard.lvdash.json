@@ -1,0 +1,451 @@
+{
+  "datasets": [
+    {
+      "name": "driver_gaps",
+      "displayName": "Live Driver Gaps",
+      "queryLines": [
+        "WITH latest_window AS (\n",
+        "  SELECT MAX(window.end) AS max_ts\n",
+        "  FROM f1_catalog.gold.gold_driver_gaps\n",
+        ")\n",
+        "SELECT\n",
+        "  CONCAT('Car ', LPAD(CAST(g.car_index AS STRING), 2, '0')) AS car_label,\n",
+        "  g.car_index,\n",
+        "  ROUND(g.gap_to_leader_m, 1) AS gap_to_leader_m,\n",
+        "  ROUND(g.segment_distance, 1) AS segment_distance_m\n",
+        "FROM f1_catalog.gold.gold_driver_gaps g\n",
+        "JOIN latest_window lw\n",
+        "  ON g.window.end = lw.max_ts\n",
+        "ORDER BY g.gap_to_leader_m ASC"
+      ]
+    },
+    {
+      "name": "vehicle_health",
+      "displayName": "Vehicle Health",
+      "queryLines": [
+        "WITH latest_window AS (\n",
+        "  SELECT MAX(last_updated) AS max_ts\n",
+        "  FROM f1_catalog.gold.gold_vehicle_health\n",
+        ")\n",
+        "SELECT\n",
+        "  CONCAT('Car ', LPAD(CAST(h.car_index AS STRING), 2, '0')) AS car_label,\n",
+        "  h.car_index,\n",
+        "  ROUND(h.tyre_wear         , 1)       AS tyre_wear_pct,\n",
+        "  ROUND(h.engine_wear       , 1)       AS engine_wear_pct,\n",
+        "  ROUND(h.front_wing_damage , 1)       AS front_wing_pct,\n",
+        "  ROUND(h.rear_wing_damage  , 1)       AS rear_wing_pct,\n",
+        "  ROUND(h.fuel_in_tank,       2)       AS fuel_kg,\n",
+        "  ROUND(h.ers_energy / 4000000.0 * 100 , 1)  AS ers_pct\n",
+        "FROM (\n",
+        "  SELECT\n",
+        "    *,\n",
+        "    ROW_NUMBER() OVER (PARTITION BY car_index ORDER BY last_updated DESC) AS rn\n",
+        "  FROM f1_catalog.gold.gold_vehicle_health\n",
+        ") h\n",
+        "JOIN latest_window lw\n",
+        "  ON h.last_updated = lw.max_ts\n",
+        "WHERE h.rn = 1\n",
+        "ORDER BY h.car_index ASC"
+      ]
+    },
+    {
+      "name": "tyre_degradation",
+      "displayName": "Tyre Degradation",
+      "queryLines": [
+        "SELECT\n",
+        "  CONCAT('Car ', LPAD(CAST(car_index AS STRING), 2, '0'), ' (', COALESCE(MAX(tyre_compound), 'Unknown'), ')') AS car_label,\n",
+        "  FLOOR(distance_traveled_m / 0.5) * 0.5 AS distance_bin_m,\n",
+        "  ROUND(AVG(average_wear_pct), 2) AS avg_wear_pct\n",
+        "FROM f1_catalog.gold.gold_tyre_degradation\n",
+        "WHERE distance_traveled_m IS NOT NULL\n",
+        "  AND average_wear_pct IS NOT NULL\n",
+        "GROUP BY\n",
+        "  car_index,\n",
+        "  FLOOR(distance_traveled_m / 0.5) * 0.5\n",
+        "ORDER BY\n",
+        "  car_index,\n",
+        "  distance_bin_m"
+      ]
+    },
+    {
+      "name": "driver_speed",
+      "displayName": "Driver Speed",
+      "queryLines": [
+        "WITH latest_window AS (\n",
+        "  SELECT MAX(window.end) AS max_ts\n",
+        "  FROM f1_catalog.gold.gold_distances\n",
+        ")\n",
+        "SELECT\n",
+        "  CONCAT('Car ', LPAD(CAST(d.car_index AS STRING), 2, '0')) AS car_label,\n",
+        "  ROUND(d.avg_speed, 0) AS speed_kmh\n",
+        "FROM f1_catalog.gold.gold_distances d\n",
+        "JOIN latest_window lw ON d.window.end = lw.max_ts\n",
+        "GROUP BY d.car_index, d.avg_speed\n",
+        "ORDER BY speed_kmh DESC"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "f1_main_page",
+      "displayName": "F1 Live Telemetry",
+      "layout": [
+        {
+          "widget": {
+            "name": "car_filter",
+            "spec": {
+              "version": 1,
+              "widgetType": "fieldFilter",
+              "filterDataset": "tyre_degradation",
+              "filterField": "car_label"
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "driver_speed_chart",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "driver_speed",
+                  "fields": [
+                    {
+                      "name": "speed_kmh",
+                      "expression": "`speed_kmh`"
+                    },
+                    {
+                      "name": "car_label",
+                      "expression": "`car_label`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "showTitle": true,
+                "title": "Live Driver Speed (km/h)"
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "speed_kmh",
+                  "axis": {
+                    "title": "Speed (km/h)"
+                  },
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "fieldName": "car_label",
+                  "axis": {
+                    "title": "Car"
+                  },
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "x-reversed"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "driver_gaps_chart",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "driver_gaps",
+                  "fields": [
+                    {
+                      "name": "gap_to_leader_m",
+                      "expression": "`gap_to_leader_m`"
+                    },
+                    {
+                      "name": "car_label",
+                      "expression": "`car_label`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "frame": {
+                "showTitle": true,
+                "title": "Driver Position Gaps"
+              },
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "gap_to_leader_m",
+                  "axis": {
+                    "title": "Gap to Leader (meters)",
+                    "hideGrid": true
+                  },
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "fieldName": "car_label",
+                  "axis": {
+                    "title": "Car"
+                  },
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "x"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 2,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "wear_matrix_chart",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "vehicle_health",
+                  "fields": [
+                    {
+                      "name": "car_label",
+                      "expression": "`car_label`"
+                    },
+                    {
+                      "name": "engine_wear_pct",
+                      "expression": "`engine_wear_pct`"
+                    },
+                    {
+                      "name": "tyre_wear_pct",
+                      "expression": "`tyre_wear_pct`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "scatter",
+              "encodings": {
+                "x": {
+                  "fieldName": "engine_wear_pct",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "Engine Wear (%)"
+                  }
+                },
+                "y": {
+                  "fieldName": "tyre_wear_pct",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "Tyre Wear (%)"
+                  }
+                },
+                "color": {
+                  "fieldName": "car_label",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "legend": {
+                    "title": "Car"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Engine vs Tyre Wear"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 8,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "energy_matrix_chart",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "vehicle_health",
+                  "fields": [
+                    {
+                      "name": "car_label",
+                      "expression": "`car_label`"
+                    },
+                    {
+                      "name": "fuel_kg",
+                      "expression": "`fuel_kg`"
+                    },
+                    {
+                      "name": "ers_pct",
+                      "expression": "`ers_pct`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "scatter",
+              "encodings": {
+                "x": {
+                  "fieldName": "fuel_kg",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "Fuel (kg)"
+                  }
+                },
+                "y": {
+                  "fieldName": "ers_pct",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "ERS Energy (%)"
+                  }
+                },
+                "color": {
+                  "fieldName": "car_label",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "legend": {
+                    "title": "Car"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Fuel vs ERS Energy"
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 8,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "tyre_deg_chart",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "tyre_degradation",
+                  "fields": [
+                    {
+                      "name": "distance_bin_m",
+                      "expression": "`distance_bin_m`"
+                    },
+                    {
+                      "name": "avg_wear_pct",
+                      "expression": "`avg_wear_pct`"
+                    },
+                    {
+                      "name": "car_label",
+                      "expression": "`car_label`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "distance_bin_m",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "Distance (m)"
+                  }
+                },
+                "y": {
+                  "fieldName": "avg_wear_pct",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "axis": {
+                    "title": "Avg Wear (%)"
+                  }
+                },
+                "color": {
+                  "fieldName": "car_label",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "legend": {
+                    "title": "Car & Compound"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Tyre Degradation"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 14,
+            "width": 12,
+            "height": 4
+          }
+        }
+      ],
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1"
+    }
+  ]
+}

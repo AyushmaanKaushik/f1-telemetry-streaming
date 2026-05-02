@@ -32,16 +32,56 @@ def generate_header(packet_id: int, car_index: int) -> bytes:
         car_index, secondary_car
     )
 
+def generate_body(packet_idx: int) -> bytes:
+    """Generates the body blob based on packet ID."""
+    if packet_idx == 6:
+        # Car Telemetry Format: <H H b f f H
+        # speed_kmh(uint16), engine_rpm(uint16), gear(int8), throttle(float), brake(float), engine_temp(uint16)
+        return struct.pack(
+            '<HHbffH',
+            random.randint(50, 340),      # speed
+            random.randint(5000, 13000),  # RPM
+            random.randint(1, 8),         # gear
+            random.random(),              # throttle
+            random.random() * 0.5,        # brake
+            random.randint(90, 110)       # temp
+        )
+    elif packet_idx == 3:
+        # Event Packet Format: <4s
+        events = [b'SSTA', b'SEND', b'RTMT', b'DRSE', b'DRSD']
+        return struct.pack('<4s', random.choice(events))
+    elif packet_idx == 7:
+        # Car Status Format: <ffBBB
+        # fuel(float), ers(float), tyre_compound(uint8), tyre_age_laps(uint8), drs_activation(uint8)
+        return struct.pack(
+            '<ffBBB',
+            random.uniform(10.0, 110.0),
+            random.uniform(0.0, 4000000.0),
+            random.randint(16, 20),
+            random.randint(0, 35),
+            random.randint(0, 1)
+        )
+    elif packet_idx == 10:
+        # Car Damage Format: <ffff
+        # front_wing(float), rear_wing(float), engine(float), tyre(float)
+        return struct.pack(
+            '<ffff',
+            random.uniform(0.0, 100.0),
+            random.uniform(0.0, 100.0),
+            random.uniform(0.0, 100.0),
+            random.uniform(0.0, 100.0)
+        )
+    else:
+        return bytes([random.randint(0, 255) for _ in range(20)])
+
 def simulate_telemetry(udp_socket: socket.socket, duration_seconds: int = None):
-    """Generates 1Hz loop of packets for a specified duration to push to the listener."""
+    """Generates 1Hz burst of packets for all 20 cars to push to the listener."""
     print(f"Starting F1 Telemetry Simulation -> UDP {HOST}:{PORT}")
-    target_fps = 1
+    target_fps = 0.05
     sleep_time = 1.0 / target_fps
     
     start_time = time.time()
     packets_sent = 0
-    
-    valid_packet_ids = [3, 6, 7, 10]
     
     try:
         while True:
@@ -50,59 +90,19 @@ def simulate_telemetry(udp_socket: socket.socket, duration_seconds: int = None):
                 print(f"Simulation ended after {duration_seconds} seconds.")
                 break
                 
-            packet_idx = random.choice(valid_packet_ids)
-            car_idx = random.randint(0, 19)
+            # Fire packets for all 20 cars to simulate real game behavior
+            for car_idx in range(20):
+                for packet_idx in [6, 7, 10]: # Telemetry, Status, Damage
+                    raw_binary_packet = generate_header(packet_id=packet_idx, car_index=car_idx)
+                    body = generate_body(packet_idx)
+                    udp_socket.sendto(raw_binary_packet + body, (HOST, PORT))
+                    packets_sent += 1
             
-            # Generate the raw binary blob
-            raw_binary_packet = generate_header(packet_id=packet_idx, car_index=car_idx)
-            
-            # Generate body based on packet ID
-            if packet_idx == 6:
-                # Car Telemetry Format: <H H b f f H
-                # speed_kmh(uint16), engine_rpm(uint16), gear(int8), throttle(float), brake(float), engine_temp(uint16)
-                body = struct.pack(
-                    '<HHbffH',
-                    random.randint(50, 340),      # speed
-                    random.randint(5000, 13000),  # RPM
-                    random.randint(1, 8),         # gear
-                    random.random(),              # throttle
-                    random.random() * 0.5,        # brake
-                    random.randint(90, 110)       # temp
-                )
-            elif packet_idx == 3:
-                # Event Packet Format: <4s
-                events = [b'SSTA', b'SEND', b'RTMT', b'DRSE', b'DRSD']
-                ev_code = random.choice(events)
-                body = struct.pack('<4s', ev_code)
-            elif packet_idx == 7:
-                # Car Status Format: <ffBBB
-                # fuel_in_tank(float), ers_energy(float), tyre_compound(uint8), tyre_age_laps(uint8), drs_activation(uint8)
-                body = struct.pack(
-                    '<ffBBB',
-                    random.uniform(10.0, 110.0), # fuel
-                    random.uniform(0.0, 4000000.0), # ers
-                    random.randint(16, 20),      # compound
-                    random.randint(0, 35),       # age
-                    random.randint(0, 1)         # drs
-                )
-            elif packet_idx == 10:
-                # Car Damage Format: <ffff
-                # front_wing(float), rear_wing(float), engine(float), tyre(float)
-                body = struct.pack(
-                    '<ffff',
-                    random.uniform(0.0, 100.0),
-                    random.uniform(0.0, 100.0),
-                    random.uniform(0.0, 100.0),
-                    random.uniform(0.0, 100.0)
-                )
-            else:
-                body = bytes([random.randint(0, 255) for _ in range(20)])
-                
-            final_payload = raw_binary_packet + body
-            
-            # Fire packet to the listener
-            udp_socket.sendto(final_payload, (HOST, PORT))
-            packets_sent += 1
+            # Occasionally fire an Event packet
+            if random.random() < 0.2:
+                raw_binary_packet = generate_header(packet_id=3, car_index=255)
+                udp_socket.sendto(raw_binary_packet + generate_body(3), (HOST, PORT))
+                packets_sent += 1
             
             time.sleep(sleep_time)
             

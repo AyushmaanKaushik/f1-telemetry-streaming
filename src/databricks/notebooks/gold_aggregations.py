@@ -1,23 +1,24 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC # Gold Layer Aggregations
+# MAGIC Reads from the four Silver Delta tables and produces 4 Gold datamarts for dashboard widgets.
 # MAGIC
-# MAGIC Reads from the four Silver Delta tables and builds 4 Gold datamarts
-# MAGIC designed for Databricks SQL Dashboard widgets:
-# MAGIC
-# MAGIC | Gold table               | Source(s)                      | Metric                          |
-# MAGIC |--------------------------|--------------------------------|---------------------------------|
-# MAGIC | `gold_distances`         | silver_telemetry               | Distance + avg speed / 1s window|
-# MAGIC | `gold_vehicle_health`    | silver_status + silver_damage  | Latest health snapshot          |
-# MAGIC | `gold_tyre_degradation`  | silver_telemetry + silver_damage | Wear vs distance / per compound|
-# MAGIC | `gold_driver_gaps`       | silver_telemetry               | Gap to race leader in meters    |
-# MAGIC
-# MAGIC All tumbling windows are 1 second. Watermark is 2 seconds to handle late data.
+# MAGIC | Gold table              | Source(s)                       | Metric                             |
+# MAGIC |-------------------------|---------------------------------|------------------------------------|
+# MAGIC | `gold_distances`        | silver_telemetry                | Distance + avg speed per 1s window |
+# MAGIC | `gold_vehicle_health`   | silver_status + silver_damage   | Latest health snapshot             |
+# MAGIC | `gold_tyre_degradation` | silver_telemetry + silver_damage| Wear vs distance per compound      |
+# MAGIC | `gold_driver_gaps`      | silver_telemetry                | Gap to race leader in meters       |
 
 # COMMAND ----------
-# MAGIC %md ## 1. Configuration
 
-CHECKPOINT_BASE = "/tmp/checkpoints/gold"
+# MAGIC %sql
+# MAGIC CREATE SCHEMA IF NOT EXISTS f1_catalog.gold;
+# MAGIC CREATE VOLUME IF NOT EXISTS f1_catalog.gold.checkpoints;
+
+# COMMAND ----------
+
+CHECKPOINT_BASE  = "/Volumes/f1_catalog/gold/checkpoints"
 
 SILVER_TELEMETRY = "f1_catalog.silver.silver_telemetry"
 SILVER_STATUS    = "f1_catalog.silver.silver_status"
@@ -28,35 +29,34 @@ GOLD_HEALTH      = "f1_catalog.gold.gold_vehicle_health"
 GOLD_TYRE_DEG    = "f1_catalog.gold.gold_tyre_degradation"
 GOLD_GAPS        = "f1_catalog.gold.gold_driver_gaps"
 
-# COMMAND ----------
-# MAGIC %md ## 2. Load Silver streams
+# 60 Hz sampling → dt ≈ 0.01667 s per packet
+DT_SECONDS = 1 / 60.0
 
-from pyspark.sql.functions import (
-    col, window, sum as _sum, avg, max as _max, min as _min, expr
-)
+# COMMAND ----------
+
+from pyspark.sql.functions import col, window, sum as _sum, avg, max as _max
+import pyspark.sql.functions as F
+from pyspark.sql.window import Window
 
 s_telemetry = spark.readStream.table(SILVER_TELEMETRY)
 s_status    = spark.readStream.table(SILVER_STATUS)
 s_damage    = spark.readStream.table(SILVER_DAMAGE)
 
 # COMMAND ----------
+
 # MAGIC %md
-# MAGIC ## 3a. Gold: Driver Distances (`gold_distances`)
-# MAGIC
-# MAGIC Physics: distance_delta (m) = speed (m/s) × dt
-# MAGIC At ~60 Hz, dt ≈ 1/60 s ≈ 0.01667 s
-# MAGIC speed_kmh → m/s: divide by 3.6
+# MAGIC ## Gold: Driver Distances
 
-DT_SECONDS = 1 / 60.0  # 60 Hz sampling rate
+# COMMAND ----------
 
+# DBTITLE 1,Cell 6
+# Batch 1: Start distances stream (no await)
 distances = (
     s_telemetry
+    .withColumn("timestamp", col("timestamp").cast("timestamp"))
     .withWatermark("timestamp", "2 seconds")
     .withColumn("distance_delta_m", (col("speed_kmh") / 3.6) * DT_SECONDS)
-    .groupBy(
-        window(col("timestamp"), "1 second"),
-        col("car_index"),
-    )
+    .groupBy(window(col("timestamp"), "1 second"), col("car_index"))
     .agg(
         _sum("distance_delta_m").alias("segment_distance"),
         avg("speed_kmh").alias("avg_speed"),
@@ -68,20 +68,24 @@ query_distances = (
              .format("delta")
              .outputMode("append")
              .option("checkpointLocation", f"{CHECKPOINT_BASE}/distances")
+             .trigger(availableNow=True)
              .toTable(GOLD_DISTANCES)
 )
 
-# COMMAND ----------
-# MAGIC %md
-# MAGIC ## 3b. Gold: Vehicle Health (`gold_vehicle_health`)
-# MAGIC
-# MAGIC Takes the worst-case (max) reading within each 1-second window
-# MAGIC across both Status and Damage silver tables.
-# MAGIC
-# MAGIC Note: stream-stream joins require both sides to have a watermark.
+print(f"✓ Started distances stream (1/2)...")
 
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Gold: Vehicle Health
+
+# COMMAND ----------
+
+# DBTITLE 1,Cell 8
+# Batch 1: Start vehicle health stream and wait for both
 status_agg = (
     s_status
+    .withColumn("timestamp", col("timestamp").cast("timestamp"))
     .withWatermark("timestamp", "2 seconds")
     .groupBy(window(col("timestamp"), "1 second"), col("car_index"))
     .agg(
@@ -95,6 +99,7 @@ status_agg = (
 
 damage_agg = (
     s_damage
+    .withColumn("timestamp", col("timestamp").cast("timestamp"))
     .withWatermark("timestamp", "2 seconds")
     .groupBy(window(col("timestamp"), "1 second"), col("car_index"))
     .agg(
@@ -106,7 +111,8 @@ damage_agg = (
 )
 
 vehicle_health = (
-    status_agg.join(damage_agg, on=["window", "car_index"], how="inner")
+    status_agg
+    .join(damage_agg, on=["window", "car_index"], how="inner")
     .select(
         col("car_index"),
         col("window.end").alias("last_updated"),
@@ -125,28 +131,38 @@ query_health = (
                   .format("delta")
                   .outputMode("append")
                   .option("checkpointLocation", f"{CHECKPOINT_BASE}/vehicle_health")
+                  .trigger(availableNow=True)
                   .toTable(GOLD_HEALTH)
 )
 
-# COMMAND ----------
-# MAGIC %md
-# MAGIC ## 3c. Gold: Tyre Degradation (`gold_tyre_degradation`)
-# MAGIC
-# MAGIC Measures average tyre wear per unit distance traveled,
-# MAGIC grouped by tyre compound and car. Uses a stream-stream join
-# MAGIC between the telemetry-derived distance and the damage tyre wear.
+print(f"✓ Started vehicle health stream (2/2)...")
+print(f"Waiting for batch 1 (distances + vehicle health) to complete...")
+query_distances.awaitTermination()
+query_health.awaitTermination()
+print(f"✅ Batch 1 completed")
+print()
 
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Gold: Tyre Degradation
+
+# COMMAND ----------
+
+# DBTITLE 1,Cell 10
+# Batch 2: Start tyre degradation stream (no await)
 telem_dist = (
     s_telemetry
+    .withColumn("timestamp", col("timestamp").cast("timestamp"))
     .withWatermark("timestamp", "2 seconds")
     .withColumn("distance_delta_m", (col("speed_kmh") / 3.6) * DT_SECONDS)
     .groupBy(window(col("timestamp"), "1 second"), col("car_index"))
     .agg(_sum("distance_delta_m").alias("distance_traveled_m"))
 )
 
-# Pull tyre_compound from silver_status (same 1s window, same car)
 status_compound = (
     s_status
+    .withColumn("timestamp", col("timestamp").cast("timestamp"))
     .withWatermark("timestamp", "2 seconds")
     .groupBy(window(col("timestamp"), "1 second"), col("car_index"))
     .agg(_max("tyre_compound").alias("tyre_compound"))
@@ -154,12 +170,12 @@ status_compound = (
 
 damage_wear = (
     s_damage
+    .withColumn("timestamp", col("timestamp").cast("timestamp"))
     .withWatermark("timestamp", "2 seconds")
     .groupBy(window(col("timestamp"), "1 second"), col("car_index"))
     .agg(avg("tyre_wear").alias("average_wear_pct"))
 )
 
-# Join all three: distance + compound + wear
 tyre_deg = (
     telem_dist
     .join(damage_wear,     on=["window", "car_index"], how="inner")
@@ -178,31 +194,27 @@ query_tyre_deg = (
             .format("delta")
             .outputMode("append")
             .option("checkpointLocation", f"{CHECKPOINT_BASE}/tyre_degradation")
+            .trigger(availableNow=True)
             .toTable(GOLD_TYRE_DEG)
 )
 
-# COMMAND ----------
-# MAGIC %md
-# MAGIC ## 3d. Gold: Head-to-Head Gaps (`gold_driver_gaps`)
-# MAGIC
-# MAGIC Computes cumulative distance per car per 1s window, then derives
-# MAGIC the gap to the leader (car with maximum distance in that window).
-# MAGIC
-# MAGIC Note: Structured Streaming does not support self-joins, so we use
-# MAGIC a batch-style `foreachBatch` to compute gaps at write time.
+print(f"✓ Started tyre degradation stream (1/2)...")
 
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Gold: Head-to-Head Driver Gaps
+# MAGIC
+# MAGIC Structured Streaming does not support stream-stream self-joins, so we use
+# MAGIC `foreachBatch` to compute the gap to the race leader within each micro-batch.
+
+# COMMAND ----------
+
+# DBTITLE 1,Cell 12
+# Batch 2: Start driver gaps stream and wait for both
 from pyspark.sql import DataFrame
-from pyspark.sql.window import Window
-import pyspark.sql.functions as F
 
 def compute_gaps(batch_df: DataFrame, batch_id: int):
-    """
-    Called for each micro-batch of the distance aggregation.
-    Computes gap_to_leader and writes to Gold delta table.
-    """
-    if batch_df.rdd.isEmpty():
-        return
-
     w = Window.partitionBy("window").orderBy(F.desc("segment_distance"))
 
     gaps = (
@@ -219,9 +231,10 @@ def compute_gaps(batch_df: DataFrame, batch_id: int):
 
     gaps.write.format("delta").mode("append").saveAsTable(GOLD_GAPS)
 
-# Re-use the distance aggregation stream (separate query, new checkpoint)
+
 distances_for_gaps = (
     s_telemetry
+    .withColumn("timestamp", col("timestamp").cast("timestamp"))
     .withWatermark("timestamp", "2 seconds")
     .withColumn("distance_delta_m", (col("speed_kmh") / 3.6) * DT_SECONDS)
     .groupBy(window(col("timestamp"), "1 second"), col("car_index"))
@@ -232,13 +245,70 @@ query_gaps = (
     distances_for_gaps.writeStream
                       .foreachBatch(compute_gaps)
                       .option("checkpointLocation", f"{CHECKPOINT_BASE}/driver_gaps")
-                      .trigger(processingTime="1 second")
+                      .trigger(availableNow=True)
                       .start()
 )
 
+print(f"✓ Started driver gaps stream (2/2)...")
+print(f"Waiting for batch 2 (tyre degradation + driver gaps) to complete...")
+query_tyre_deg.awaitTermination()
+query_gaps.awaitTermination()
+print(f"✅ Batch 2 completed")
+
 # COMMAND ----------
-print("All 4 Gold streams started:")
-print(f"  Distances        → {GOLD_DISTANCES}")
-print(f"  Vehicle Health   → {GOLD_HEALTH}")
-print(f"  Tyre Degradation → {GOLD_TYRE_DEG}")
-print(f"  Driver Gaps      → {GOLD_GAPS}")
+
+# DBTITLE 1,Cell 13
+print("\n" + "="*60)
+print("✅ All 4 Gold streams completed successfully!")
+print("="*60)
+print(f"  Batch 1: Distances + Vehicle Health")
+print(f"    • {GOLD_DISTANCES}")
+print(f"    • {GOLD_HEALTH}")
+print(f"  Batch 2: Tyre Degradation + Driver Gaps")
+print(f"    • {GOLD_TYRE_DEG}")
+print(f"    • {GOLD_GAPS}")
+print("="*60)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Dashboard Readiness Validation
+# MAGIC
+# MAGIC Run this cell **after** the Gold streams have been active for at least 30 seconds.
+# MAGIC It confirms all four Gold tables are populated before wiring up the SQL Dashboard widgets.
+# MAGIC **All counts must be > 0 before proceeding to dashboard creation.**
+
+# COMMAND ----------
+
+validation_tables = [
+    ("gold_driver_gaps",       GOLD_GAPS),
+    ("gold_vehicle_health",    GOLD_HEALTH),
+    ("gold_tyre_degradation",  GOLD_TYRE_DEG),
+    ("gold_distances",         GOLD_DISTANCES),
+]
+
+all_pass = True
+print("=" * 55)
+print("  Dashboard Readiness Check")
+print("=" * 55)
+
+for short_name, full_name in validation_tables:
+    try:
+        count = spark.read.table(full_name).count()
+        status = "✅ PASS" if count > 0 else "❌ FAIL (0 rows)"
+        if count == 0:
+            all_pass = False
+    except Exception as e:
+        status = f"❌ ERROR ({e})"
+        all_pass = False
+    print(f"  {short_name:<28} {count:>6} rows   {status}")
+
+print("=" * 55)
+if all_pass:
+    print("  ✅ All tables populated — safe to deploy dashboard.")
+else:
+    print("  ❌ Some tables are empty. Wait for streams to produce")
+    print("     data (run synthetic_generator for 30+ seconds),")
+    print("     then re-run this cell before building the dashboard.")
+    raise AssertionError("Gold tables not yet populated — dashboard deployment blocked.")
+
