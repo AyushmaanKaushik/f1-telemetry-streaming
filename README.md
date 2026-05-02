@@ -1,8 +1,6 @@
 # F1 Telemetry Streaming Platform
 
-This is a side project to learn more about databricks and the goal is to simulate the working of a data engineering pipeline for real-time telemetry streaming using live data from the scenario of F1 races.
-
-
+This is a side project to learn more about databricks and the goal is to simulate the working of a data engineering pipeline for real-time telemetry streaming. I found the scenario of F1 cars sending data from multiple sensors and monitoring issues in near real time to be the perfect use case to build this project on!
 
 ---
 
